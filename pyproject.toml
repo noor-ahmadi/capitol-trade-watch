@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "capitol-trade-watch"
 version = "0.1.0"
-description = "GitHub alerts for newly published congressional trade disclosures"
+description = "A small GitHub-powered watcher for congressional trade disclosures"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
