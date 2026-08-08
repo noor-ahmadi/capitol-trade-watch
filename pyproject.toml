@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "capitol-trade-watch"
+version = "0.1.0"
+description = "GitHub alerts for newly published congressional trade disclosures"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+  { name = "Noor Ahmadi" },
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/noor-ahmadi/capitol-trade-watch"
+
+[project.scripts]
+capitol-trade-watch = "capitol_trade_watch.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
