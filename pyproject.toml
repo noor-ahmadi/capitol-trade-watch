@@ -14,11 +14,15 @@ authors = [
 ]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+test = [
+  "pytest==9.1.1",
+]
 
 [project.urls]
 Repository = "https://github.com/noor-ahmadi/capitol-trade-watch"
@@ -28,3 +32,8 @@ capitol-trade-watch = "capitol_trade_watch.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]
