@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from datetime import date
 from pathlib import Path
 
 from capitol_trade_watch import __version__
 from capitol_trade_watch.config import ConfigError, validate_config
+from capitol_trade_watch.house_index import HouseIndexError
+from capitol_trade_watch.seed import seed_existing_filings
+from capitol_trade_watch.state import StateError
 
 _DEFAULT_CONFIG = Path("config/tracked_people.toml")
+_DEFAULT_STATE = Path("data/state.json")
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(
         prog="capitol-trade-watch",
-        description="Congressional disclosure alert tracker (scaffolding only).",
+        description="Keep an eye on congressional trade disclosures.",
     )
     parser.add_argument(
         "--version",
@@ -34,6 +39,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_CONFIG,
         help=f"configuration path (default: {_DEFAULT_CONFIG})",
     )
+    seed_parser = subparsers.add_parser(
+        "seed",
+        help="silently remember filings that already exist",
+    )
+    seed_parser.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG,
+        help=f"configuration path (default: {_DEFAULT_CONFIG})",
+    )
+    seed_parser.add_argument(
+        "--state",
+        type=Path,
+        default=_DEFAULT_STATE,
+        help=f"state path (default: {_DEFAULT_STATE})",
+    )
+    seed_parser.add_argument(
+        "--as-of",
+        type=_iso_date,
+        help="date used to choose index years (YYYY-MM-DD; default: today)",
+    )
     return parser
 
 
@@ -50,8 +76,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Configuration is valid: {len(people)} tracked person(s).")
         return 0
 
+    if arguments.command == "seed":
+        try:
+            summary = seed_existing_filings(
+                arguments.config,
+                arguments.state,
+                as_of=arguments.as_of,
+            )
+        except (ConfigError, HouseIndexError, StateError) as error:
+            parser.error(str(error))
+        print(
+            f"Seed complete: {summary.added} filing(s) added, "
+            f"{summary.total} remembered in total."
+        )
+        return 0
+
     parser.print_help()
     return 0
+
+
+def _iso_date(value: str) -> date:
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "expected a date in YYYY-MM-DD form"
+        ) from error
+    if parsed.isoformat() != value:
+        raise argparse.ArgumentTypeError("expected a date in YYYY-MM-DD form")
+    return parsed
 
 
 if __name__ == "__main__":

@@ -17,13 +17,13 @@ official House filing  ->  small Python job  ->  a ping in my GitHub inbox
 Nancy Pelosi is the first name on the watch list. The code is meant to make
 adding other House members boring later on.
 
-**status:** it can find matching PTRs in the official House index; the alarm is
-not wired yet.
+**status:** it can find matching PTRs in the official House index and remember
+which ones it has seen. The alarm is still not wired.
 
 Right now the repo has the tracked-person config, disclosure models, config
-validation, and the House index reader. It does not parse the filing PDFs or
-send notifications yet. I am building those pieces in small passes so the
-history stays easy to follow.
+validation, the House index reader, and a small JSON ledger. It does not parse
+the filing PDFs or send notifications yet. I am building those pieces in small
+passes so the history stays easy to follow.
 
 ## running what exists
 
@@ -38,6 +38,16 @@ python -m capitol_trade_watch validate-config
 ```
 
 The watch list lives in `config/tracked_people.toml`.
+
+To mark everything already public as seen:
+
+```powershell
+python -m capitol_trade_watch seed
+```
+
+That checks the current and previous House indexes, then updates
+`data/state.json`. It does not send anything. This is the quiet first run so old
+filings do not turn into new alerts later.
 
 ## a few rules for the project
 
