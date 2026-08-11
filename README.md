@@ -43,11 +43,12 @@ To mark everything already public as seen:
 
 ```powershell
 python -m capitol_trade_watch seed
+python -m capitol_trade_watch status
 ```
 
 That checks the current and previous House indexes, then updates
 `data/state.json`. It does not send anything. This is the quiet first run so old
-filings do not turn into new alerts later.
+filings do not turn into new alerts later. `status` only reads that file.
 
 ## a few rules for the project
 
