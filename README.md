@@ -17,13 +17,13 @@ official House filing  ->  small Python job  ->  a ping in my GitHub inbox
 Nancy Pelosi is the first name on the watch list. The code is meant to make
 adding other House members boring later on.
 
-**status:** it can find matching PTRs, remember which ones it has seen, and read
-the transaction rows from their PDFs. The alarm is still not wired.
+**status:** it can find matching PTRs, remember which ones it has seen, read the
+PDFs, and format the result as a Markdown alert. Nothing posts those alerts yet.
 
 Right now the repo has the tracked-person config, disclosure models, config
-validation, the House index reader, a small JSON ledger, and the report parser.
-It does not send notifications yet. I am building those pieces in small passes
-so the history stays easy to follow.
+validation, the House index reader, a small JSON ledger, the report parser, and
+the alert formatter. It does not send notifications yet. I am building those
+pieces in small passes so the history stays easy to follow.
 
 ## running what exists
 
