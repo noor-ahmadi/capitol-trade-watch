@@ -29,7 +29,7 @@ def render_disclosure_alert(report: HouseReportResult) -> DisclosureAlert:
         f"(filed {filing.filing_date.isoformat()})"
     )
     lines = [
-        f"<!-- capitol-trade-watch:house-ptr:{filing.document_id} -->",
+        filing_marker(filing.document_id),
         "",
         (
             f"{_markdown_text(filing.filer.display_name)} filed a House Periodic "
@@ -66,6 +66,13 @@ def render_disclosure_alert(report: HouseReportResult) -> DisclosureAlert:
         title=title,
         body="\n".join(lines) + "\n",
     )
+
+
+def filing_marker(document_id: str) -> str:
+    """Return the stable marker used to prevent duplicate filing issues."""
+    if not document_id.isdigit():
+        raise AlertRenderError(f"invalid House document ID: {document_id!r}")
+    return f"<!-- capitol-trade-watch:house-ptr:{document_id} -->"
 
 
 def _render_transactions(filing: Filing) -> list[str]:

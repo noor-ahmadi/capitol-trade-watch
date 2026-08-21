@@ -18,12 +18,14 @@ Nancy Pelosi is the first name on the watch list. The code is meant to make
 adding other House members boring later on.
 
 **status:** it can find matching PTRs, remember which ones it has seen, read the
-PDFs, and format the result as a Markdown alert. Nothing posts those alerts yet.
+PDFs, format an alert, and publish it as one assigned GitHub issue. No workflow
+runs the publisher yet.
 
 Right now the repo has the tracked-person config, disclosure models, config
-validation, the House index reader, a small JSON ledger, the report parser, and
-the alert formatter. It does not send notifications yet. I am building those
-pieces in small passes so the history stays easy to follow.
+validation, the House index reader, a small JSON ledger, the report parser, the
+alert formatter, and an idempotent issue publisher. It only needs the built-in
+`GITHUB_TOKEN`; there is no personal API token to configure. Nothing runs on a
+timer yet.
 
 ## running what exists
 
