@@ -18,8 +18,8 @@ Nancy Pelosi is the first name on the watch list. The code is meant to make
 adding other House members boring later on.
 
 **status:** it can find matching PTRs, remember which ones it has seen, read the
-PDFs, format an alert, and publish it as one assigned GitHub issue. No workflow
-runs the publisher yet.
+PDFs, format an alert, and publish it as one assigned GitHub issue. There is a
+manual switchboard now; the timer is still off.
 
 Right now the repo has the tracked-person config, disclosure models, config
 validation, the House index reader, a small JSON ledger, the report parser, the
@@ -51,6 +51,19 @@ python -m capitol_trade_watch status
 That checks the current and previous House indexes, then updates
 `data/state.json`. It does not send anything. This is the quiet first run so old
 filings do not turn into new alerts later. `status` only reads that file.
+
+## trying the switchboard
+
+On GitHub, open **Actions → Manual monitor → Run workflow**. There are three
+choices:
+
+- `preview` reads and formats anything new, but saves and sends nothing.
+- `seed` quietly updates the filing ledger on `main`.
+- `test-alert` makes an obviously fake issue so I can check email or phone
+  delivery.
+
+None of these run by themselves. Scheduling comes later, after the quiet seed
+and notification test have both been checked.
 
 ## a few rules for the project
 

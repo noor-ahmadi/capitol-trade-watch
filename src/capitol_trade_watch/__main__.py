@@ -8,8 +8,16 @@ from datetime import date
 from pathlib import Path
 
 from capitol_trade_watch import __version__
+from capitol_trade_watch.alerts import AlertRenderError
 from capitol_trade_watch.config import ConfigError, validate_config
+from capitol_trade_watch.github_issues import GitHubIssueError
 from capitol_trade_watch.house_index import HouseIndexError
+from capitol_trade_watch.house_report import HouseReportError
+from capitol_trade_watch.monitor import (
+    format_preview,
+    preview_new_filings,
+    publish_test_alert,
+)
 from capitol_trade_watch.seed import seed_existing_filings
 from capitol_trade_watch.state import StateError, StateStore
 
@@ -60,6 +68,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=_iso_date,
         help="date used to choose index years (YYYY-MM-DD; default: today)",
     )
+    preview_parser = subparsers.add_parser(
+        "preview",
+        help="render unseen filings without publishing or changing state",
+    )
+    preview_parser.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG,
+        help=f"configuration path (default: {_DEFAULT_CONFIG})",
+    )
+    preview_parser.add_argument(
+        "--state",
+        type=Path,
+        default=_DEFAULT_STATE,
+        help=f"state path (default: {_DEFAULT_STATE})",
+    )
+    preview_parser.add_argument(
+        "--as-of",
+        type=_iso_date,
+        help="date used to choose index years (YYYY-MM-DD; default: today)",
+    )
+    subparsers.add_parser(
+        "test-alert",
+        help="create a clearly synthetic GitHub issue to test notifications",
+    )
     status_parser = subparsers.add_parser(
         "status",
         help="show what the filing ledger remembers",
@@ -98,6 +131,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"Seed complete: {summary.added} filing(s) added, "
             f"{summary.total} remembered in total."
+        )
+        return 0
+
+    if arguments.command == "preview":
+        try:
+            preview = preview_new_filings(
+                arguments.config,
+                arguments.state,
+                as_of=arguments.as_of,
+            )
+        except (
+            AlertRenderError,
+            ConfigError,
+            HouseIndexError,
+            HouseReportError,
+            StateError,
+        ) as error:
+            parser.error(str(error))
+        print(format_preview(preview), end="")
+        return 0
+
+    if arguments.command == "test-alert":
+        try:
+            result = publish_test_alert()
+        except GitHubIssueError as error:
+            parser.error(str(error))
+        verb = "Created" if result.created else "Reused"
+        print(
+            f"{verb} synthetic test issue #{result.issue_number}: "
+            f"{result.issue_url}"
         )
         return 0
 

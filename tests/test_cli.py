@@ -8,6 +8,9 @@ import pytest
 import capitol_trade_watch.__main__ as cli
 from capitol_trade_watch import __version__
 from capitol_trade_watch.__main__ import main
+from capitol_trade_watch.alerts import DisclosureAlert
+from capitol_trade_watch.github_issues import PublishResult
+from capitol_trade_watch.monitor import PreviewResult
 from capitol_trade_watch.seed import SeedSummary
 from capitol_trade_watch.state import SeenFiling, StateStore, TrackerState
 
@@ -54,6 +57,61 @@ def test_seed_command_reports_counts_without_sending_anything(
     }
     assert capsys.readouterr().out.strip() == (
         "Seed complete: 5 filing(s) added, 5 remembered in total."
+    )
+
+
+def test_preview_command_prints_without_changing_state(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+    alert = DisclosureAlert(
+        document_id="20040001",
+        title="Nancy Pelosi PTR 20040001 (filed 2026-08-20)",
+        body="preview body\n",
+    )
+
+    def fake_preview(
+        config_path: Path,
+        state_path: Path,
+        *,
+        as_of: date | None,
+    ) -> PreviewResult:
+        captured.update(config_path=config_path, state_path=state_path, as_of=as_of)
+        return PreviewResult(alerts=(alert,))
+
+    monkeypatch.setattr(cli, "preview_new_filings", fake_preview)
+
+    assert main(["preview", "--as-of", "2026-08-22"]) == 0
+    assert captured == {
+        "config_path": Path("config/tracked_people.toml"),
+        "state_path": Path("data/state.json"),
+        "as_of": date(2026, 8, 22),
+    }
+    output = capsys.readouterr().out
+    assert "Preview only" in output
+    assert alert.title in output
+    assert "preview body" in output
+
+
+def test_test_alert_command_reports_the_synthetic_issue(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "publish_test_alert",
+        lambda: PublishResult(
+            created=True,
+            issue_number=12,
+            issue_url="https://github.com/noor/project/issues/12",
+        ),
+    )
+
+    assert main(["test-alert"]) == 0
+    assert capsys.readouterr().out.strip() == (
+        "Created synthetic test issue #12: "
+        "https://github.com/noor/project/issues/12"
     )
 
 
