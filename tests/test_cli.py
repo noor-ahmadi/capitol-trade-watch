@@ -10,7 +10,7 @@ from capitol_trade_watch import __version__
 from capitol_trade_watch.__main__ import main
 from capitol_trade_watch.alerts import DisclosureAlert
 from capitol_trade_watch.github_issues import PublishResult
-from capitol_trade_watch.monitor import PreviewResult
+from capitol_trade_watch.monitor import CheckSummary, PreviewResult
 from capitol_trade_watch.seed import SeedSummary
 from capitol_trade_watch.state import SeenFiling, StateStore, TrackerState
 
@@ -92,6 +92,40 @@ def test_preview_command_prints_without_changing_state(
     assert "Preview only" in output
     assert alert.title in output
     assert "preview body" in output
+
+
+def test_check_command_reports_real_alert_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_check(
+        config_path: Path,
+        state_path: Path,
+        *,
+        as_of: date | None,
+    ) -> CheckSummary:
+        captured.update(config_path=config_path, state_path=state_path, as_of=as_of)
+        return CheckSummary(
+            new_filings=2,
+            created_issues=1,
+            reused_issues=1,
+            remembered_filings=7,
+        )
+
+    monkeypatch.setattr(cli, "check_for_new_filings", fake_check)
+
+    assert main(["check", "--as-of", "2026-08-22"]) == 0
+    assert captured == {
+        "config_path": Path("config/tracked_people.toml"),
+        "state_path": Path("data/state.json"),
+        "as_of": date(2026, 8, 22),
+    }
+    assert capsys.readouterr().out.strip() == (
+        "Check complete: 2 new filing(s), 1 issue(s) created, "
+        "1 reused, 7 remembered in total."
+    )
 
 
 def test_test_alert_command_reports_the_synthetic_issue(

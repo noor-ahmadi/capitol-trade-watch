@@ -14,6 +14,9 @@ from capitol_trade_watch.github_issues import GitHubIssueError
 from capitol_trade_watch.house_index import HouseIndexError
 from capitol_trade_watch.house_report import HouseReportError
 from capitol_trade_watch.monitor import (
+    MonitorError,
+    check_for_new_filings,
+    format_check_summary,
     format_preview,
     preview_new_filings,
     publish_test_alert,
@@ -89,6 +92,27 @@ def build_parser() -> argparse.ArgumentParser:
         type=_iso_date,
         help="date used to choose index years (YYYY-MM-DD; default: today)",
     )
+    check_parser = subparsers.add_parser(
+        "check",
+        help="publish unseen filings after a quiet seed",
+    )
+    check_parser.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG,
+        help=f"configuration path (default: {_DEFAULT_CONFIG})",
+    )
+    check_parser.add_argument(
+        "--state",
+        type=Path,
+        default=_DEFAULT_STATE,
+        help=f"state path (default: {_DEFAULT_STATE})",
+    )
+    check_parser.add_argument(
+        "--as-of",
+        type=_iso_date,
+        help="date used to choose index years (YYYY-MM-DD; default: today)",
+    )
     subparsers.add_parser(
         "test-alert",
         help="create a clearly synthetic GitHub issue to test notifications",
@@ -150,6 +174,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         ) as error:
             parser.error(str(error))
         print(format_preview(preview), end="")
+        return 0
+
+    if arguments.command == "check":
+        try:
+            summary = check_for_new_filings(
+                arguments.config,
+                arguments.state,
+                as_of=arguments.as_of,
+            )
+        except (
+            AlertRenderError,
+            ConfigError,
+            GitHubIssueError,
+            HouseIndexError,
+            HouseReportError,
+            MonitorError,
+            StateError,
+        ) as error:
+            parser.error(str(error))
+        print(format_check_summary(summary))
         return 0
 
     if arguments.command == "test-alert":

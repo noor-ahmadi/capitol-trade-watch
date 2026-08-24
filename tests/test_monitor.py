@@ -13,7 +13,10 @@ from capitol_trade_watch.house_index import HouseIndexResult, HouseIndexStatus
 from capitol_trade_watch.house_report import HouseReportResult
 from capitol_trade_watch.models import Filing, TrackedPerson, Transaction
 from capitol_trade_watch.monitor import (
+    MonitorError,
     build_test_alert,
+    check_for_new_filings,
+    format_check_summary,
     format_preview,
     preview_new_filings,
     publish_test_alert,
@@ -68,15 +71,27 @@ class FakeReportClient:
 
 
 class FakePublisher:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        created: bool = True,
+        fail_at: int | None = None,
+    ) -> None:
+        self.created = created
+        self.fail_at = fail_at
         self.alerts: list[DisclosureAlert] = []
 
     def publish(self, alert: DisclosureAlert) -> PublishResult:
         self.alerts.append(alert)
+        if self.fail_at == len(self.alerts):
+            raise GitHubIssueError("synthetic publishing failure")
         return PublishResult(
-            created=True,
-            issue_number=12,
-            issue_url="https://github.com/noor/project/issues/12",
+            created=self.created,
+            issue_number=11 + len(self.alerts),
+            issue_url=(
+                "https://github.com/noor/project/issues/"
+                f"{11 + len(self.alerts)}"
+            ),
         )
 
 
@@ -136,6 +151,150 @@ def test_preview_skips_filings_already_in_the_ledger(tmp_path: Path) -> None:
     }
     assert state_path.read_bytes() == before
     assert "No unseen filings found." in format_preview(preview)
+
+
+def test_real_check_refuses_to_run_before_a_quiet_seed(tmp_path: Path) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    index_client = FakeIndexClient(_results())
+
+    with pytest.raises(MonitorError, match="seed"):
+        check_for_new_filings(
+            config_path,
+            state_path,
+            as_of=date(2026, 8, 22),
+            index_client=index_client,  # type: ignore[arg-type]
+        )
+
+    assert index_client.modified_since is None
+    assert not state_path.exists()
+
+
+def test_real_check_publishes_then_records_an_unseen_filing(
+    tmp_path: Path,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    checked_at = datetime(2026, 8, 22, 14, 30, tzinfo=UTC)
+    StateStore(state_path).save(
+        TrackerState(
+            initialized=True,
+            updated_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        )
+    )
+    index_client = FakeIndexClient(_results())
+    report_client = FakeReportClient()
+    publisher = FakePublisher()
+
+    summary = check_for_new_filings(
+        config_path,
+        state_path,
+        as_of=date(2026, 8, 22),
+        observed_at=checked_at,
+        index_client=index_client,  # type: ignore[arg-type]
+        report_client=report_client,  # type: ignore[arg-type]
+        issue_client=publisher,
+    )
+
+    assert summary.new_filings == 1
+    assert summary.created_issues == 1
+    assert summary.reused_issues == 0
+    assert summary.remembered_filings == 1
+    assert report_client.fetched == ["20040001"]
+    assert publisher.alerts[0].document_id == "20040001"
+    saved = StateStore(state_path).load()
+    assert list(saved.filings) == ["20040001"]
+    assert saved.updated_at == checked_at
+    assert format_check_summary(summary) == (
+        "Check complete: 1 new filing(s), 1 issue(s) created, "
+        "0 reused, 1 remembered in total."
+    )
+
+
+def test_real_check_records_an_idempotently_reused_issue(tmp_path: Path) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    StateStore(state_path).save(TrackerState(initialized=True))
+
+    summary = check_for_new_filings(
+        config_path,
+        state_path,
+        as_of=date(2026, 8, 22),
+        observed_at=datetime(2026, 8, 22, 15, 0, tzinfo=UTC),
+        index_client=FakeIndexClient(_results()),  # type: ignore[arg-type]
+        report_client=FakeReportClient(),  # type: ignore[arg-type]
+        issue_client=FakePublisher(created=False),
+    )
+
+    assert (summary.created_issues, summary.reused_issues) == (0, 1)
+    assert list(StateStore(state_path).load().filings) == ["20040001"]
+
+
+def test_real_check_does_not_save_state_after_a_publish_failure(
+    tmp_path: Path,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    StateStore(state_path).save(TrackerState(initialized=True))
+    before = state_path.read_bytes()
+    first = _results()[0].filings[0]
+    second = replace(
+        first,
+        document_id="20040002",
+        filing_date=date(2026, 8, 21),
+        source_url=first.source_url.replace("20040001", "20040002"),
+    )
+    current, prior = _results()
+    results = (replace(current, filings=(first, second)), prior)
+    publisher = FakePublisher(fail_at=2)
+
+    with pytest.raises(GitHubIssueError, match="publishing failure"):
+        check_for_new_filings(
+            config_path,
+            state_path,
+            as_of=date(2026, 8, 22),
+            observed_at=datetime(2026, 8, 22, 15, 30, tzinfo=UTC),
+            index_client=FakeIndexClient(results),  # type: ignore[arg-type]
+            report_client=FakeReportClient(),  # type: ignore[arg-type]
+            issue_client=publisher,
+        )
+
+    assert [alert.document_id for alert in publisher.alerts] == [
+        "20040001",
+        "20040002",
+    ]
+    assert state_path.read_bytes() == before
+
+
+def test_real_check_with_no_new_filings_does_not_need_an_issue_token(
+    tmp_path: Path,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    results = _results()
+    StateStore(state_path).save(
+        record_results(
+            TrackerState(),
+            results,
+            observed_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        )
+    )
+    checked_at = datetime(2026, 8, 22, 16, 0, tzinfo=UTC)
+
+    summary = check_for_new_filings(
+        config_path,
+        state_path,
+        as_of=date(2026, 8, 22),
+        observed_at=checked_at,
+        environ={},
+        index_client=FakeIndexClient(results),  # type: ignore[arg-type]
+    )
+
+    assert summary.new_filings == 0
+    assert summary.created_issues == 0
+    assert summary.reused_issues == 0
+    assert summary.remembered_filings == 1
+    assert StateStore(state_path).load().updated_at == checked_at
 
 
 def test_test_alert_is_unmistakably_synthetic() -> None:

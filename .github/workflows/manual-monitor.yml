@@ -11,6 +11,7 @@ on:
         options:
           - preview
           - seed
+          - check
           - test-alert
 
 permissions: {}
@@ -86,6 +87,51 @@ jobs:
         run: |
           if git diff --quiet -- data/state.json; then
             echo "The filing ledger was already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/state.json
+          git commit -m "update filing state"
+          git push origin HEAD:main
+
+  check:
+    name: Check for real filing alerts
+    if: ${{ inputs.mode == 'check' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install watcher
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-test.txt
+          python -m pip install --disable-pip-version-check --no-deps --editable .
+
+      - name: Find and publish real filing alerts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m capitol_trade_watch check
+
+      - name: Commit the checked filing ledger
+        run: |
+          if git diff --quiet -- data/state.json; then
+            echo "The filing ledger did not change."
             exit 0
           fi
           git config user.name "github-actions[bot]"

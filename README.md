@@ -19,7 +19,7 @@ adding other House members boring later on.
 
 **status:** it can find matching PTRs, remember which ones it has seen, read the
 PDFs, format an alert, and publish it as one assigned GitHub issue. There is a
-manual switchboard now; the timer is still off.
+manual switchboard for the whole loop now; the timer is still off.
 
 Right now the repo has the tracked-person config, disclosure models, config
 validation, the House index reader, a small JSON ledger, the report parser, the
@@ -59,11 +59,14 @@ choices:
 
 - `preview` reads and formats anything new, but saves and sends nothing.
 - `seed` quietly updates the filing ledger on `main`.
+- `check` looks for real new filings, sends their issues, then saves the
+  ledger. It refuses to start until `seed` has run.
 - `test-alert` makes an obviously fake issue so I can check email or phone
   delivery.
 
-None of these run by themselves. Scheduling comes later, after the quiet seed
-and notification test have both been checked.
+None of these run by themselves. The intended order is `seed`, `test-alert`,
+then `check`. Scheduling comes later, after the quiet seed and notification
+test have both been checked.
 
 ## a few rules for the project
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -22,7 +22,11 @@ from capitol_trade_watch.github_issues import (
 )
 from capitol_trade_watch.house_index import HouseIndexClient
 from capitol_trade_watch.house_report import HouseReportClient
-from capitol_trade_watch.state import StateStore, unseen_filings
+from capitol_trade_watch.state import StateStore, record_results, unseen_filings
+
+
+class MonitorError(RuntimeError):
+    """Raised when a real filing check is not safe to run."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +34,16 @@ class PreviewResult:
     """Alerts rendered from unseen filings without changing saved state."""
 
     alerts: tuple[DisclosureAlert, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CheckSummary:
+    """Counts from one completed real filing check."""
+
+    new_filings: int
+    created_issues: int
+    reused_issues: int
+    remembered_filings: int
 
 
 class _IssuePublisher(Protocol):
@@ -59,6 +73,67 @@ def preview_new_filings(
         for filing in unseen_filings(state, results)
     )
     return PreviewResult(alerts=alerts)
+
+
+def check_for_new_filings(
+    config_path: str | Path,
+    state_path: str | Path,
+    *,
+    as_of: date | None = None,
+    observed_at: datetime | None = None,
+    environ: Mapping[str, str] | None = None,
+    index_client: HouseIndexClient | None = None,
+    report_client: HouseReportClient | None = None,
+    issue_client: _IssuePublisher | None = None,
+) -> CheckSummary:
+    """Publish unseen filings and save state only after every alert succeeds."""
+    people = load_tracked_people(config_path)
+    store = StateStore(state_path)
+    state = store.load()
+    if not state.initialized:
+        raise MonitorError(
+            "the filing ledger has not been seeded; run the seed command first"
+        )
+
+    results = (index_client or HouseIndexClient()).fetch_recent(
+        as_of or date.today(),
+        people,
+        modified_since=state.sources,
+    )
+    unseen = unseen_filings(state, results)
+    updated_state = record_results(
+        state,
+        results,
+        observed_at=observed_at or datetime.now(UTC),
+    )
+
+    publish_results: list[PublishResult] = []
+    if unseen:
+        reports = report_client or HouseReportClient()
+        publisher = issue_client or GitHubIssueClient.from_environment(
+            environ=environ
+        )
+        for filing in unseen:
+            alert = render_disclosure_alert(reports.fetch(filing))
+            publish_results.append(publisher.publish(alert))
+
+    store.save(updated_state)
+    return CheckSummary(
+        new_filings=len(unseen),
+        created_issues=sum(result.created for result in publish_results),
+        reused_issues=sum(not result.created for result in publish_results),
+        remembered_filings=len(updated_state.filings),
+    )
+
+
+def format_check_summary(summary: CheckSummary) -> str:
+    """Format the counts from a real filing check."""
+    return (
+        f"Check complete: {summary.new_filings} new filing(s), "
+        f"{summary.created_issues} issue(s) created, "
+        f"{summary.reused_issues} reused, "
+        f"{summary.remembered_filings} remembered in total."
+    )
 
 
 def format_preview(preview: PreviewResult) -> str:
