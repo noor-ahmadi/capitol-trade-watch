@@ -218,14 +218,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("No seed has been saved yet.")
             return 0
 
-        last_checked = (
+        last_saved_check = (
             state.updated_at.isoformat().replace("+00:00", "Z")
             if state.updated_at is not None
             else "unknown"
         )
         print(
             f"Remembering {len(state.filings)} filing(s). "
-            f"Last checked: {last_checked}."
+            f"Last saved check: {last_saved_check}."
         )
         return 0
 

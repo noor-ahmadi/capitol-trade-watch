@@ -1,11 +1,11 @@
-"""Read-only filing previews and synthetic delivery checks."""
+"""Filing previews, real checks, and synthetic delivery tests."""
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -24,6 +24,8 @@ from capitol_trade_watch.house_index import HouseIndexClient
 from capitol_trade_watch.house_report import HouseReportClient
 from capitol_trade_watch.state import StateStore, record_results, unseen_filings
 
+_HEARTBEAT_INTERVAL = timedelta(days=1)
+
 
 class MonitorError(RuntimeError):
     """Raised when a real filing check is not safe to run."""
@@ -38,12 +40,13 @@ class PreviewResult:
 
 @dataclass(frozen=True, slots=True)
 class CheckSummary:
-    """Counts from one completed real filing check."""
+    """Counts and ledger save status from one completed real filing check."""
 
     new_filings: int
     created_issues: int
     reused_issues: int
     remembered_filings: int
+    state_saved: bool
 
 
 class _IssuePublisher(Protocol):
@@ -86,7 +89,10 @@ def check_for_new_filings(
     report_client: HouseReportClient | None = None,
     issue_client: _IssuePublisher | None = None,
 ) -> CheckSummary:
-    """Publish unseen filings and save state only after every alert succeeds."""
+    """Publish unseen filings and save state only after every alert succeeds.
+
+    Quiet checks save a heartbeat at most once every 24 hours.
+    """
     people = load_tracked_people(config_path)
     store = StateStore(state_path)
     state = store.load()
@@ -101,10 +107,11 @@ def check_for_new_filings(
         modified_since=state.sources,
     )
     unseen = unseen_filings(state, results)
+    checked_at = observed_at or datetime.now(UTC)
     updated_state = record_results(
         state,
         results,
-        observed_at=observed_at or datetime.now(UTC),
+        observed_at=checked_at,
     )
 
     publish_results: list[PublishResult] = []
@@ -117,22 +124,34 @@ def check_for_new_filings(
             alert = render_disclosure_alert(reports.fetch(filing))
             publish_results.append(publisher.publish(alert))
 
-    store.save(updated_state)
+    state_saved = (
+        bool(unseen)
+        or state.updated_at is None
+        or checked_at - state.updated_at >= _HEARTBEAT_INTERVAL
+    )
+    if state_saved:
+        store.save(updated_state)
     return CheckSummary(
         new_filings=len(unseen),
         created_issues=sum(result.created for result in publish_results),
         reused_issues=sum(not result.created for result in publish_results),
         remembered_filings=len(updated_state.filings),
+        state_saved=state_saved,
     )
 
 
 def format_check_summary(summary: CheckSummary) -> str:
-    """Format the counts from a real filing check."""
+    """Format the counts and ledger save status from a real filing check."""
+    ledger_status = (
+        "Ledger saved."
+        if summary.state_saved
+        else "Ledger unchanged; daily heartbeat not due."
+    )
     return (
         f"Check complete: {summary.new_filings} new filing(s), "
         f"{summary.created_issues} issue(s) created, "
         f"{summary.reused_issues} reused, "
-        f"{summary.remembered_filings} remembered in total."
+        f"{summary.remembered_filings} remembered in total. {ledger_status}"
     )
 
 

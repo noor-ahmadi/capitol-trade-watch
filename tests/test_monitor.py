@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ from capitol_trade_watch.monitor import (
     publish_test_alert,
 )
 from capitol_trade_watch.state import (
+    StateError,
     StateStore,
     TrackerState,
     record_results,
@@ -179,7 +180,7 @@ def test_real_check_publishes_then_records_an_unseen_filing(
     StateStore(state_path).save(
         TrackerState(
             initialized=True,
-            updated_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+            updated_at=checked_at - timedelta(minutes=15),
         )
     )
     index_client = FakeIndexClient(_results())
@@ -200,6 +201,7 @@ def test_real_check_publishes_then_records_an_unseen_filing(
     assert summary.created_issues == 1
     assert summary.reused_issues == 0
     assert summary.remembered_filings == 1
+    assert summary.state_saved is True
     assert report_client.fetched == ["20040001"]
     assert publisher.alerts[0].document_id == "20040001"
     saved = StateStore(state_path).load()
@@ -207,35 +209,48 @@ def test_real_check_publishes_then_records_an_unseen_filing(
     assert saved.updated_at == checked_at
     assert format_check_summary(summary) == (
         "Check complete: 1 new filing(s), 1 issue(s) created, "
-        "0 reused, 1 remembered in total."
+        "0 reused, 1 remembered in total. Ledger saved."
     )
 
 
 def test_real_check_records_an_idempotently_reused_issue(tmp_path: Path) -> None:
     config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
     state_path = tmp_path / "state.json"
-    StateStore(state_path).save(TrackerState(initialized=True))
+    checked_at = datetime(2026, 8, 22, 15, 0, tzinfo=UTC)
+    StateStore(state_path).save(
+        TrackerState(
+            initialized=True,
+            updated_at=checked_at - timedelta(minutes=15),
+        )
+    )
 
     summary = check_for_new_filings(
         config_path,
         state_path,
         as_of=date(2026, 8, 22),
-        observed_at=datetime(2026, 8, 22, 15, 0, tzinfo=UTC),
+        observed_at=checked_at,
         index_client=FakeIndexClient(_results()),  # type: ignore[arg-type]
         report_client=FakeReportClient(),  # type: ignore[arg-type]
         issue_client=FakePublisher(created=False),
     )
 
     assert (summary.created_issues, summary.reused_issues) == (0, 1)
+    assert summary.state_saved is True
     assert list(StateStore(state_path).load().filings) == ["20040001"]
+    assert StateStore(state_path).load().updated_at == checked_at
 
 
+@pytest.mark.parametrize("elapsed", [timedelta(minutes=15), timedelta(days=1)])
 def test_real_check_does_not_save_state_after_a_publish_failure(
     tmp_path: Path,
+    elapsed: timedelta,
 ) -> None:
     config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
     state_path = tmp_path / "state.json"
-    StateStore(state_path).save(TrackerState(initialized=True))
+    checked_at = datetime(2026, 8, 22, 15, 30, tzinfo=UTC)
+    StateStore(state_path).save(
+        TrackerState(initialized=True, updated_at=checked_at - elapsed)
+    )
     before = state_path.read_bytes()
     first = _results()[0].filings[0]
     second = replace(
@@ -253,7 +268,7 @@ def test_real_check_does_not_save_state_after_a_publish_failure(
             config_path,
             state_path,
             as_of=date(2026, 8, 22),
-            observed_at=datetime(2026, 8, 22, 15, 30, tzinfo=UTC),
+            observed_at=checked_at,
             index_client=FakeIndexClient(results),  # type: ignore[arg-type]
             report_client=FakeReportClient(),  # type: ignore[arg-type]
             issue_client=publisher,
@@ -294,7 +309,144 @@ def test_real_check_with_no_new_filings_does_not_need_an_issue_token(
     assert summary.created_issues == 0
     assert summary.reused_issues == 0
     assert summary.remembered_filings == 1
+    assert summary.state_saved is True
     assert StateStore(state_path).load().updated_at == checked_at
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "heartbeat_due"),
+    [
+        (timedelta(minutes=15), False),
+        (timedelta(days=1) - timedelta(seconds=1), False),
+        (timedelta(days=1), True),
+        (timedelta(days=2), True),
+    ],
+)
+@pytest.mark.parametrize("not_modified", [False, True])
+def test_quiet_checks_save_only_when_the_daily_heartbeat_is_due(
+    tmp_path: Path,
+    elapsed: timedelta,
+    heartbeat_due: bool,
+    not_modified: bool,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    checked_at = datetime(2026, 8, 22, 16, 0, tzinfo=UTC)
+    current, prior = _results()
+    saved = record_results(
+        TrackerState(),
+        (current, prior),
+        observed_at=checked_at - elapsed,
+    )
+    store = StateStore(state_path)
+    store.save(saved)
+    before = state_path.read_bytes()
+    current = (
+        replace(current, status=HouseIndexStatus.NOT_MODIFIED, filings=())
+        if not_modified
+        else replace(current, last_modified="Sat, 22 Aug 2026 15:00:00 GMT")
+    )
+    index_client = FakeIndexClient((current, prior))
+    report_client = FakeReportClient()
+
+    summary = check_for_new_filings(
+        config_path,
+        state_path,
+        as_of=date(2026, 8, 22),
+        observed_at=checked_at,
+        environ={},
+        index_client=index_client,  # type: ignore[arg-type]
+        report_client=report_client,  # type: ignore[arg-type]
+    )
+
+    assert index_client.modified_since == saved.sources
+    assert report_client.fetched == []
+    assert (summary.new_filings, summary.created_issues, summary.reused_issues) == (
+        0, 0, 0
+    )
+    assert summary.remembered_filings == 1
+    if heartbeat_due:
+        assert store.load().updated_at == checked_at
+        assert store.load().sources == {2026: current.last_modified}
+        assert store.load().filings == saved.filings
+        assert "Ledger saved." in format_check_summary(summary)
+    else:
+        assert state_path.read_bytes() == before
+        assert "Ledger unchanged; daily heartbeat not due." in format_check_summary(
+            summary
+        )
+    assert summary.state_saved is heartbeat_due
+
+    if heartbeat_due:
+        after_heartbeat = state_path.read_bytes()
+        next_summary = check_for_new_filings(
+            config_path,
+            state_path,
+            as_of=date(2026, 8, 22),
+            observed_at=checked_at + timedelta(minutes=15),
+            environ={},
+            index_client=index_client,  # type: ignore[arg-type]
+        )
+        assert state_path.read_bytes() == after_heartbeat
+        assert index_client.modified_since == store.load().sources
+        assert next_summary.state_saved is False
+
+
+def test_quiet_check_saves_a_heartbeat_when_the_saved_timestamp_is_missing(
+    tmp_path: Path,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    checked_at = datetime(2026, 8, 22, 16, 0, tzinfo=UTC)
+    current, prior = _results()
+    results = (replace(current, filings=()), prior)
+    store = StateStore(state_path)
+    store.save(TrackerState(initialized=True))
+
+    summary = check_for_new_filings(
+        config_path,
+        state_path,
+        as_of=date(2026, 8, 22),
+        observed_at=checked_at,
+        environ={},
+        index_client=FakeIndexClient(results),  # type: ignore[arg-type]
+    )
+
+    assert summary.new_filings == 0
+    assert summary.state_saved is True
+    assert store.load().updated_at == checked_at
+
+
+def test_quiet_check_still_rejects_conflicts_before_a_heartbeat_is_due(
+    tmp_path: Path,
+) -> None:
+    config_path = Path(__file__).parents[1] / "config" / "tracked_people.toml"
+    state_path = tmp_path / "state.json"
+    checked_at = datetime(2026, 8, 22, 16, 0, tzinfo=UTC)
+    current, prior = _results()
+    saved = record_results(
+        TrackerState(),
+        (current, prior),
+        observed_at=checked_at - timedelta(minutes=15),
+    )
+    StateStore(state_path).save(saved)
+    before = state_path.read_bytes()
+    conflicting_filing = replace(
+        current.filings[0], filing_date=date(2026, 8, 21)
+    )
+    results = (replace(current, filings=(conflicting_filing,)), prior)
+
+    with pytest.raises(StateError, match="conflicts with the saved filing"):
+        check_for_new_filings(
+            config_path,
+            state_path,
+            as_of=date(2026, 8, 22),
+            observed_at=checked_at,
+            environ={},
+            index_client=FakeIndexClient(results),  # type: ignore[arg-type]
+        )
+
+    assert state_path.read_bytes() == before
 
 
 def test_test_alert_is_unmistakably_synthetic() -> None:

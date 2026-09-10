@@ -54,7 +54,7 @@ filings do not turn into new alerts later. `status` only reads that file.
 
 ## trying the switchboard
 
-On GitHub, open **Actions → Manual monitor → Run workflow**. There are three
+On GitHub, open **Actions → Manual monitor → Run workflow**. There are four
 choices:
 
 - `preview` reads and formats anything new, but saves and sends nothing.
@@ -67,6 +67,13 @@ choices:
 None of these run by themselves. The intended order is `seed`, `test-alert`,
 then `check`. Scheduling comes later, after the quiet seed and notification
 test have both been checked.
+
+`check` saves the ledger as soon as all new filing alerts succeed. With nothing
+new, it saves a heartbeat only once 24 hours have passed since the last save.
+The workflow commits only when that file changes, so quiet checks do not each
+add a commit. `status` shows the last saved check; individual runs still report
+their result in the Actions log. Source timestamps are saved with the ledger,
+so an index that changes between heartbeats may be downloaded again.
 
 ## a few rules for the project
 

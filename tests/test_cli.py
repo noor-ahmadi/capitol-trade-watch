@@ -112,6 +112,7 @@ def test_check_command_reports_real_alert_counts(
             created_issues=1,
             reused_issues=1,
             remembered_filings=7,
+            state_saved=True,
         )
 
     monkeypatch.setattr(cli, "check_for_new_filings", fake_check)
@@ -124,7 +125,7 @@ def test_check_command_reports_real_alert_counts(
     }
     assert capsys.readouterr().out.strip() == (
         "Check complete: 2 new filing(s), 1 issue(s) created, "
-        "1 reused, 7 remembered in total."
+        "1 reused, 7 remembered in total. Ledger saved."
     )
 
 
@@ -187,5 +188,5 @@ def test_status_command_shows_saved_filings(
 
     assert main(["status", "--state", str(state_path)]) == 0
     assert capsys.readouterr().out.strip() == (
-        "Remembering 1 filing(s). Last checked: 2026-08-11T13:45:00Z."
+        "Remembering 1 filing(s). Last saved check: 2026-08-11T13:45:00Z."
     )
