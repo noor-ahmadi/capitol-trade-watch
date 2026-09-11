@@ -1,7 +1,59 @@
 {
-  "filings": {},
-  "initialized": false,
+  "filings": {
+    "20026590": {
+      "document_id": "20026590",
+      "filing_date": "2025-01-17",
+      "filing_year": 2025,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2025/20026590.pdf"
+    },
+    "20030630": {
+      "document_id": "20030630",
+      "filing_date": "2025-07-09",
+      "filing_year": 2025,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2025/20030630.pdf"
+    },
+    "20033337": {
+      "document_id": "20033337",
+      "filing_date": "2025-10-24",
+      "filing_year": 2025,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2025/20033337.pdf"
+    },
+    "20033725": {
+      "document_id": "20033725",
+      "filing_date": "2026-01-23",
+      "filing_year": 2026,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033725.pdf"
+    },
+    "20034836": {
+      "document_id": "20034836",
+      "filing_date": "2026-06-23",
+      "filing_year": 2026,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034836.pdf"
+    },
+    "20035143": {
+      "document_id": "20035143",
+      "filing_date": "2026-08-21",
+      "filing_year": 2026,
+      "first_seen_at": "2026-09-11T22:06:25.516916Z",
+      "person_id": "nancy-pelosi",
+      "source_url": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035143.pdf"
+    }
+  },
+  "initialized": true,
   "schema_version": 1,
-  "sources": {},
-  "updated_at": null
+  "sources": {
+    "2025": "Fri, 11 Sep 2026 13:00:10 GMT",
+    "2026": "Fri, 11 Sep 2026 13:00:10 GMT"
+  },
+  "updated_at": "2026-09-11T22:06:25.516916Z"
 }
