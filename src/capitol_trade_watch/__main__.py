@@ -11,6 +11,7 @@ from capitol_trade_watch import __version__
 from capitol_trade_watch.alerts import AlertRenderError
 from capitol_trade_watch.config import ConfigError, validate_config
 from capitol_trade_watch.github_issues import GitHubIssueError
+from capitol_trade_watch.health import HealthReportError
 from capitol_trade_watch.house_index import HouseIndexError
 from capitol_trade_watch.house_report import HouseReportError
 from capitol_trade_watch.monitor import (
@@ -20,6 +21,7 @@ from capitol_trade_watch.monitor import (
     format_preview,
     preview_new_filings,
     publish_test_alert,
+    report_monitor_health,
 )
 from capitol_trade_watch.seed import seed_existing_filings
 from capitol_trade_watch.state import StateError, StateStore
@@ -117,6 +119,11 @@ def build_parser() -> argparse.ArgumentParser:
         "test-alert",
         help="create a clearly synthetic GitHub issue to test notifications",
     )
+    health_parser = subparsers.add_parser(
+        "report-health",
+        help="report a check job's success or failure through its health issue",
+    )
+    health_parser.add_argument("result", choices=("success", "failure"))
     status_parser = subparsers.add_parser(
         "status",
         help="show what the filing ledger remembers",
@@ -206,6 +213,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{verb} synthetic test issue #{result.issue_number}: "
             f"{result.issue_url}"
         )
+        return 0
+
+    if arguments.command == "report-health":
+        try:
+            result = report_monitor_health(healthy=arguments.result == "success")
+        except (GitHubIssueError, HealthReportError) as error:
+            parser.error(str(error))
+        if result is None:
+            print("Monitor is healthy; no health issue needed.")
+        else:
+            print(f"Health issue #{result.issue_number}: {result.issue_url}")
         return 0
 
     if arguments.command == "status":

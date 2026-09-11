@@ -1,4 +1,4 @@
-"""Publish filing alerts as idempotent, assigned GitHub issues."""
+"""Publish filing alerts and monitor health as assigned GitHub issues."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from capitol_trade_watch.alerts import DisclosureAlert, filing_marker
+from capitol_trade_watch.health import HEALTH_ISSUE_MARKER, HealthReport
 from capitol_trade_watch.house_index import USER_AGENT
 
 GITHUB_API_VERSION = "2026-03-10"
@@ -25,7 +26,7 @@ class GitHubIssueError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class PublishResult:
-    """The GitHub issue reused or created for one filing."""
+    """The GitHub issue reused or created for a notice."""
 
     created: bool
     issue_number: int
@@ -33,7 +34,7 @@ class PublishResult:
 
 
 class GitHubIssueClient:
-    """Create one assigned issue per House document using the GitHub REST API."""
+    """Manage filing alerts and a reusable monitor health issue."""
 
     def __init__(
         self,
@@ -89,11 +90,7 @@ class GitHubIssueClient:
                 "its marker once"
             )
 
-        matches = [
-            issue
-            for issue in self._list_issues()
-            if marker in _issue_body(issue) and "pull_request" not in issue
-        ]
+        matches = self._matching_issues(marker)
         if len(matches) > 1:
             issue_numbers = ", ".join(
                 str(_issue_number(issue)) for issue in matches
@@ -109,6 +106,60 @@ class GitHubIssueClient:
         issue = self._create_issue(alert)
         issue = self._ensure_assignee(issue)
         return self._publish_result(issue, created=True)
+
+    def report_health(self, report: HealthReport) -> PublishResult | None:
+        """Open, reuse, or close one health issue without repeated comments."""
+        if report.body.count(HEALTH_ISSUE_MARKER) != 1:
+            raise GitHubIssueError("health report must contain its marker once")
+        matches = self._matching_issues(HEALTH_ISSUE_MARKER)
+        if len(matches) > 1:
+            issue_numbers = ", ".join(str(_issue_number(issue)) for issue in matches)
+            raise GitHubIssueError(
+                f"multiple monitor health issues already exist: {issue_numbers}"
+            )
+        if not matches:
+            if report.healthy:
+                return None
+            issue = self._ensure_assignee(self._create_issue(report))
+            if _issue_state(issue) != "open":
+                raise GitHubIssueError("GitHub did not open the monitor health issue")
+            return self._publish_result(issue, created=True)
+
+        issue = matches[0]
+        current_state = _issue_state(issue)
+        if not report.healthy:
+            issue = self._ensure_assignee(issue)
+        desired_state = "closed" if report.healthy else "open"
+        if current_state != desired_state:
+            issue_number = _issue_number(issue)
+            response = self._request_json(
+                "PATCH",
+                f"{self._repository_path}/issues/{issue_number}",
+                payload={
+                    "title": report.title,
+                    "body": report.body,
+                    "state": desired_state,
+                    "state_reason": "completed" if report.healthy else "reopened",
+                },
+                expected_status=200,
+            )
+            if (
+                not isinstance(response, dict)
+                or _issue_number(response) != issue_number
+                or _issue_state(response) != desired_state
+            ):
+                raise GitHubIssueError(
+                    f"GitHub did not mark health issue {issue_number} as {desired_state}"
+                )
+            issue = response
+        return self._publish_result(issue, created=False)
+
+    def _matching_issues(self, marker: str) -> list[dict[str, Any]]:
+        return [
+            issue
+            for issue in self._list_issues()
+            if marker in _issue_body(issue) and "pull_request" not in issue
+        ]
 
     def _list_issues(self) -> list[dict[str, Any]]:
         issues: list[dict[str, Any]] = []
@@ -135,7 +186,7 @@ class GitHubIssueClient:
                 return issues
         raise GitHubIssueError("repository issue pagination exceeded the safety limit")
 
-    def _create_issue(self, alert: DisclosureAlert) -> dict[str, Any]:
+    def _create_issue(self, alert: DisclosureAlert | HealthReport) -> dict[str, Any]:
         response = self._request_json(
             "POST",
             f"{self._repository_path}/issues",
@@ -271,6 +322,13 @@ def _issue_number(issue: dict[str, Any]) -> int:
     if type(number) is not int or number <= 0:
         raise GitHubIssueError("GitHub returned an issue with an invalid number")
     return number
+
+
+def _issue_state(issue: dict[str, Any]) -> str:
+    state = issue.get("state")
+    if state not in ("open", "closed"):
+        raise GitHubIssueError("GitHub returned an issue with an invalid state")
+    return state
 
 
 def _has_assignee(issue: dict[str, Any], expected_login: str) -> bool:

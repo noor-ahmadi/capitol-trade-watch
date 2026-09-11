@@ -20,6 +20,7 @@ from capitol_trade_watch.github_issues import (
     GitHubIssueError,
     PublishResult,
 )
+from capitol_trade_watch.health import build_health_report
 from capitol_trade_watch.house_index import HouseIndexClient
 from capitol_trade_watch.house_report import HouseReportClient
 from capitol_trade_watch.state import StateStore, record_results, unseen_filings
@@ -252,6 +253,18 @@ def publish_test_alert(
     )
     publisher = client or GitHubIssueClient.from_environment(environ=values)
     return publisher.publish(alert)
+
+
+def report_monitor_health(
+    *,
+    healthy: bool,
+    environ: Mapping[str, str] | None = None,
+    client: GitHubIssueClient | None = None,
+) -> PublishResult | None:
+    """Report the check job result without reading or changing the filing ledger."""
+    report = build_health_report(healthy=healthy, environ=environ)
+    publisher = client or GitHubIssueClient.from_environment(environ=environ)
+    return publisher.report_health(report)
 
 
 def _required_environment(values: Mapping[str, str], name: str) -> str:

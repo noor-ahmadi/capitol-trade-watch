@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from io import BytesIO
 from typing import Any
 from urllib.error import HTTPError
@@ -15,6 +16,8 @@ from capitol_trade_watch.github_issues import (
     GitHubIssueClient,
     GitHubIssueError,
 )
+from capitol_trade_watch.health import HEALTH_ISSUE_MARKER, build_health_report
+from capitol_trade_watch.monitor import report_monitor_health
 
 
 @pytest.fixture
@@ -47,9 +50,11 @@ class FakeGitHubApi:
         issues: list[dict[str, Any]] | None = None,
         *,
         drop_assignment_on_create: bool = False,
+        ignore_state_updates: bool = False,
     ) -> None:
         self.issues = issues or []
         self.drop_assignment_on_create = drop_assignment_on_create
+        self.ignore_state_updates = ignore_state_updates
         self.requests: list[Request] = []
         self.timeouts: list[float] = []
 
@@ -80,6 +85,15 @@ class FakeGitHubApi:
             )
             self.issues.append(issue)
             return FakeResponse(201, issue)
+
+        if method == "PATCH" and url.path.startswith("/repos/noor/project/issues/"):
+            issue_number = int(url.path.split("/")[-1])
+            payload = _request_payload(request)
+            issue = next(item for item in self.issues if item["number"] == issue_number)
+            if self.ignore_state_updates:
+                payload.pop("state", None)
+            issue.update(payload)
+            return FakeResponse(200, issue)
 
         if method == "POST" and url.path.endswith("/assignees"):
             issue_number = int(url.path.split("/")[-2])
@@ -273,6 +287,153 @@ def test_api_errors_do_not_expose_the_token(alert: DisclosureAlert) -> None:
     assert "HTTP 403" in str(error_info.value)
     assert token not in str(error_info.value)
     assert "[redacted]" in str(error_info.value)
+
+
+def test_health_issue_reuses_failures_closes_on_recovery_and_reopens(
+    alert: DisclosureAlert,
+) -> None:
+    api = FakeGitHubApi()
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+    environ = {"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"}
+    failed = build_health_report(healthy=False, environ=environ)
+    recovered = build_health_report(healthy=True, environ=environ)
+    assert client.report_health(recovered) is None
+    assert api.issues == []
+
+    client.publish(alert)
+    first = client.report_health(failed)
+    assert first is not None and first.created
+    assert first.issue_number == 2
+    assert api.issues[1]["state"] == "open"
+    assert api.issues[1]["assignees"] == [{"login": "noor"}]
+    first_failure_body = api.issues[1]["body"]
+
+    environ["GITHUB_RUN_ID"] = "12346"
+    failed_again = build_health_report(healthy=False, environ=environ)
+    before = len(api.requests)
+    repeated = client.report_health(failed_again)
+    assert repeated is not None and not repeated.created
+    assert repeated.issue_number == first.issue_number
+    assert api.issues[1]["body"] == first_failure_body
+    assert all(request.get_method() == "GET" for request in api.requests[before:])
+
+    recovered = build_health_report(healthy=True, environ=environ)
+    client.report_health(recovered)
+    assert api.issues[1]["state"] == "closed"
+    assert api.issues[1]["state_reason"] == "completed"
+    assert api.issues[1]["body"] == recovered.body
+    before = len(api.requests)
+    client.report_health(recovered)
+    assert all(request.get_method() == "GET" for request in api.requests[before:])
+
+    reopened = client.report_health(failed_again)
+    assert reopened is not None and not reopened.created
+    assert reopened.issue_number == first.issue_number
+    assert len(api.issues) == 2
+    assert api.issues[1]["state"] == "open"
+    assert api.issues[1]["state_reason"] == "reopened"
+    assert api.issues[1]["title"] == failed_again.title
+    assert api.issues[1]["body"] == failed_again.body
+    assert api.issues[0]["body"] == alert.body
+    assert api.issues[0]["state"] == "open"
+    assert not any("/comments" in request.full_url for request in api.requests)
+
+
+def test_health_notice_repairs_assignment_and_uses_the_workflow_environment() -> None:
+    api = FakeGitHubApi(drop_assignment_on_create=True)
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+    environ = {"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"}
+
+    result = report_monitor_health(healthy=False, environ=environ, client=client)
+
+    assert result is not None and result.created
+    assert api.issues[0]["assignees"] == [{"login": "noor"}]
+    assert "/actions/runs/12345" in api.issues[0]["body"]
+    api.issues[0]["assignees"] = []
+    reused = report_monitor_health(healthy=False, environ=environ, client=client)
+    assert reused is not None and not reused.created
+    assert len(api.issues) == 1
+    assert api.issues[0]["assignees"] == [{"login": "noor"}]
+
+
+def test_health_recovery_searches_every_page_and_ignores_pull_requests() -> None:
+    environ = {"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"}
+    report = build_health_report(healthy=True, environ=environ)
+    issues = [
+        _issue(number=number, body="unrelated", assignees=[], title="unrelated")
+        for number in range(1, 102)
+    ]
+    issues[0].update(body=HEALTH_ISSUE_MARKER, pull_request={"url": "pull/1"})
+    issues[100]["body"] = HEALTH_ISSUE_MARKER
+    api = FakeGitHubApi(issues)
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+
+    result = client.report_health(report)
+
+    assert result is not None and result.issue_number == 101
+    assert issues[100]["state"] == "closed"
+    assert all(issue["state"] == "open" for issue in issues[:100])
+    assert len([request for request in api.requests if request.get_method() == "GET"]) == 2
+
+
+@pytest.mark.parametrize("healthy", [False, True])
+def test_health_updates_refuse_duplicate_issues(healthy: bool) -> None:
+    api = FakeGitHubApi([
+        _issue(number=number, body=HEALTH_ISSUE_MARKER, assignees=[], title="health")
+        for number in (4, 9)
+    ])
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+    report = build_health_report(
+        healthy=healthy,
+        environ={"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"},
+    )
+
+    with pytest.raises(GitHubIssueError, match="multiple monitor health issues.*4, 9"):
+        client.report_health(report)
+    assert all(request.get_method() == "GET" for request in api.requests)
+
+
+@pytest.mark.parametrize("body", ["missing marker", HEALTH_ISSUE_MARKER * 2])
+def test_health_report_requires_its_marker_before_contacting_github(body: str) -> None:
+    api = FakeGitHubApi()
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+    report = build_health_report(
+        healthy=False,
+        environ={"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"},
+    )
+
+    with pytest.raises(GitHubIssueError, match="must contain its marker once"):
+        client.report_health(replace(report, body=body))
+    assert api.requests == []
+
+
+@pytest.mark.parametrize("healthy", [False, True])
+def test_health_updates_verify_github_changed_the_issue_state(healthy: bool) -> None:
+    issue = _issue(
+        number=4, body=HEALTH_ISSUE_MARKER, assignees=[{"login": "noor"}], title="health"
+    )
+    issue["state"] = "open" if healthy else "closed"
+    api = FakeGitHubApi([issue], ignore_state_updates=True)
+    client = GitHubIssueClient(
+        repository="noor/project", token="test-token", assignee="noor", opener=api
+    )
+    report = build_health_report(
+        healthy=healthy,
+        environ={"GITHUB_RUN_ID": "12345", "GITHUB_REPOSITORY": "noor/project"},
+    )
+
+    with pytest.raises(GitHubIssueError, match="did not mark health issue 4"):
+        client.report_health(report)
 
 
 def _issue(

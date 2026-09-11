@@ -150,6 +150,42 @@ def test_test_alert_command_reports_the_synthetic_issue(
     )
 
 
+@pytest.mark.parametrize(
+    ("outcome", "issue_number"),
+    [("failure", 3), ("success", 3), ("success", None)],
+)
+def test_report_health_command(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    outcome: str,
+    issue_number: int | None,
+) -> None:
+    def fake_report(*, healthy: bool) -> PublishResult | None:
+        assert healthy is (outcome == "success")
+        if issue_number is None:
+            return None
+        return PublishResult(
+            created=False,
+            issue_number=issue_number,
+            issue_url=f"https://github.com/noor/project/issues/{issue_number}",
+        )
+
+    monkeypatch.setattr(cli, "report_monitor_health", fake_report)
+
+    assert main(["report-health", outcome]) == 0
+    output = capsys.readouterr().out.strip()
+    if issue_number is None:
+        assert output == "Monitor is healthy; no health issue needed."
+    else:
+        assert output == "Health issue #3: https://github.com/noor/project/issues/3"
+
+
+def test_report_health_does_not_treat_cancellation_as_recovery() -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["report-health", "cancelled"])
+    assert exit_info.value.code == 2
+
+
 def test_status_command_shows_an_unseeded_ledger(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

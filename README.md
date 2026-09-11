@@ -75,6 +75,13 @@ add a commit. `status` shows the last saved check; individual runs still report
 their result in the Actions log. Source timestamps are saved with the ledger,
 so an index that changes between heartbeats may be downloaded again.
 
+After the watcher is installed, a failed `check` job opens one assigned
+`[HEALTH]` issue with a link to the run. Further failures reuse it without
+adding comments. A successful check and ledger save close it; a later failure
+reopens it. Manual monitor runs share one queue so they cannot update the
+ledger or health issue at the same time. Setup failures, canceled runs, and
+GitHub outages still need to be checked in Actions.
+
 ## a few rules for the project
 
 - The official filing wins. The tracker should repeat it, not embellish it.
