@@ -1,6 +1,8 @@
-name: Manual monitor
+name: Monitor filings
 
 on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -97,7 +99,7 @@ jobs:
 
   check:
     name: Check for real filing alerts
-    if: ${{ inputs.mode == 'check' }}
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'check' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

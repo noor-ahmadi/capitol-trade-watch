@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_manual_workflow_has_four_modes_and_no_schedule() -> None:
+def test_monitor_has_four_manual_modes_and_schedules_only_real_checks() -> None:
     workflow_path = (
         Path(__file__).parents[1]
         / ".github"
@@ -11,11 +11,19 @@ def test_manual_workflow_has_four_modes_and_no_schedule() -> None:
     workflow = workflow_path.read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in workflow
-    assert "schedule:" not in workflow
-    assert "cron:" not in workflow
+    assert '  schedule:\n    - cron: "7,22,37,52 * * * *"' in workflow
     for mode in ("preview", "seed", "check", "test-alert"):
         assert f"- {mode}" in workflow
-        assert f"inputs.mode == '{mode}'" in workflow
+        job = workflow.split(f"\n  {mode}:\n", 1)[1].split(
+            "    runs-on:", 1
+        )[0]
+        condition = job.split("    if: ", 1)[1].strip()
+        if mode == "check":
+            assert condition == (
+                "${{ github.event_name == 'schedule' || inputs.mode == 'check' }}"
+            )
+        else:
+            assert condition == "${{ inputs.mode == '" + mode + "' }}"
 
 
 def test_manual_jobs_use_pinned_actions_and_narrow_permissions() -> None:

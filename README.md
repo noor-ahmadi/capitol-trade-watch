@@ -18,14 +18,13 @@ Nancy Pelosi is the first name on the watch list. The code is meant to make
 adding other House members boring later on.
 
 **status:** it can find matching PTRs, remember which ones it has seen, read the
-PDFs, format an alert, and publish it as one assigned GitHub issue. There is a
-manual switchboard for the whole loop now; the timer is still off.
+PDFs, format an alert, and publish it as one assigned GitHub issue. The timer
+is on, with a check planned every 15 minutes. Manual controls are still there.
 
 Right now the repo has the tracked-person config, disclosure models, config
 validation, the House index reader, a small JSON ledger, the report parser, the
 alert formatter, and an idempotent issue publisher. It only needs the built-in
-`GITHUB_TOKEN`; there is no personal API token to configure. Nothing runs on a
-timer yet.
+`GITHUB_TOKEN`; there is no personal API token to configure.
 
 ## running what exists
 
@@ -51,10 +50,12 @@ python -m capitol_trade_watch status
 That checks the current and previous House indexes, then updates
 `data/state.json`. It does not send anything. This is the quiet first run so old
 filings do not turn into new alerts later. `status` only reads that file.
+Seeding is for initial setup; running it again marks current filings as seen
+without sending alerts.
 
 ## trying the switchboard
 
-On GitHub, open **Actions → Manual monitor → Run workflow**. There are four
+On GitHub, open **Actions → Monitor filings → Run workflow**. There are four
 choices:
 
 - `preview` reads and formats anything new, but saves and sends nothing.
@@ -64,9 +65,18 @@ choices:
 - `test-alert` makes an obviously fake issue so I can check email or phone
   delivery.
 
-None of these run by themselves. The intended order is `seed`, `test-alert`,
-then `check`. Scheduling comes later, after the quiet seed and notification
-test have both been checked.
+The timer runs only `check`, at minutes **7, 22, 37, and 52** of every hour in
+UTC. Preview, seed, and test alerts stay manual. GitHub can delay or skip
+scheduled runs when busy, so this is not an exact delivery deadline. See
+[GitHub's scheduling notes](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+New filing issues are assigned to the repository owner. For email, enable
+**Email** and **On GitHub** under **Participating, @mentions and custom** in
+[notification settings](https://github.com/settings/notifications). For phone
+pushes, enable **Assignments** in GitHub Mobile and allow the app's
+notifications on the phone. Quiet checks send no notification.
+
+To pause monitoring, disable **Monitor filings** from its Actions menu.
 
 `check` saves the ledger as soon as all new filing alerts succeed. With nothing
 new, it saves a heartbeat only once 24 hours have passed since the last save.
@@ -78,7 +88,7 @@ so an index that changes between heartbeats may be downloaded again.
 After the watcher is installed, a failed `check` job opens one assigned
 `[HEALTH]` issue with a link to the run. Further failures reuse it without
 adding comments. A successful check and ledger save close it; a later failure
-reopens it. Manual monitor runs share one queue so they cannot update the
+reopens it. Scheduled and manual runs share one queue so they cannot update the
 ledger or health issue at the same time. Setup failures, canceled runs, and
 GitHub outages still need to be checked in Actions.
 
